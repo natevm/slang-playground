@@ -399,12 +399,11 @@ async function doRun() {
 
 /**
  * Scan the source for URL-based module void-declarations, fetch each exactly once,
- * populate FS and editor tabs, strip out the declarations, and return cleaned source.
+ * and populate FS and editor tabs. The source text is not modified.
  */
 const fetchedURLModules = new Set<string>();
 async function runURLImports(sourceText: string): Promise<string> {
     const urlImportRe = /\[playground::URL\(\s*"([^"]+)"\s*\)\]\s*void\s+([A-Za-z_]\w*)\s*\(\s*\)\s*;/g;
-    let cleaned = sourceText;
     let m: RegExpExecArray | null;
     while ((m = urlImportRe.exec(sourceText)) !== null) {
         const [, urlStr, modName] = m;
@@ -437,9 +436,8 @@ async function runURLImports(sourceText: string): Promise<string> {
                 );
             } catch {}
         }
-        cleaned = cleaned.replace(m[0], '');
     }
-    return cleaned;
+    return sourceText;
 }
 
 async function tryRun() {
