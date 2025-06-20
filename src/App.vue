@@ -330,17 +330,10 @@ function loadDemo(selectedDemoURL: string) {
         fetch(finalURL)
             .then((response) => response.text())
         .then(async (data) => {
-                if (selectedDemoURL.endsWith("module-from-url.slang")) {
-                    data = await runURLImports(data);
-                    // Activate the newly imported module tab
-                    await nextTick();
-                    const tabs = fileTabs.value;
-                    if (tabs.length > 2) {
-                        editorTabContainer.value?.setActiveTab(tabs[tabs.length - 1].name);
-                    }
-                }
                 codeEditor.value?.setEditorValue(data);
-                updateEntryPointOptions();
+                // // Work around first-switch highlighting glitch: reapply 'slang' mode on the user tab
+                // const userTab = fileTabs.value[0];
+                // editorRefs[userTab.name]?.setLanguage('slang');
                 compileOrRun();
             });
     }
@@ -355,7 +348,9 @@ function updateEntryPointOptions() {
         selectedEntrypoint.value = entrypoints.value[0];
 }
 
-function compileOrRun() {
+async function compileOrRun() {
+    await runURLImports(codeEditor.value!.getValue());
+    updateEntryPointOptions();
     const userSource = codeEditor.value!.getValue();
     const shaderType = checkShaderType(userSource);
 
@@ -399,12 +394,11 @@ async function doRun() {
 
 /**
  * Scan the source for URL-based module void-declarations, fetch each exactly once,
- * populate FS and editor tabs, strip out the declarations, and return cleaned source.
+ * and populate FS and editor tabs. The source text is not modified.
  */
 const fetchedURLModules = new Set<string>();
 async function runURLImports(sourceText: string): Promise<string> {
     const urlImportRe = /\[playground::URL\(\s*"([^"]+)"\s*\)\]\s*void\s+([A-Za-z_]\w*)\s*\(\s*\)\s*;/g;
-    let cleaned = sourceText;
     let m: RegExpExecArray | null;
     while ((m = urlImportRe.exec(sourceText)) !== null) {
         const [, urlStr, modName] = m;
@@ -430,6 +424,11 @@ async function runURLImports(sourceText: string): Promise<string> {
                 await nextTick();
             }
             editorRefs[tabName]?.setEditorValue(modText);
+            // Notify language server of the newly opened module so diagnostics and completions work
+            if (slangd) {
+                const tabUri = fileTabs.value.find(t => t.name === tabName)!.uri;
+                slangd.didOpenTextDocument(tabUri, modText);
+            }
             try {
                 compiler?.slangWasmModule.FS.writeFile(
                     new URL(fileTabs.value.find(t => t.name === tabName)!.uri).pathname,
@@ -437,9 +436,9 @@ async function runURLImports(sourceText: string): Promise<string> {
                 );
             } catch {}
         }
-        cleaned = cleaned.replace(m[0], '');
     }
-    return cleaned;
+    console.log("Done loading!");
+    return sourceText;
 }
 
 async function tryRun() {
@@ -509,7 +508,6 @@ async function onCompile() {
     toggleDisplayMode(null);
     const compileTarget = targetSelect.value!.getValue();
 
-    await updateEntryPointOptions();
 
     if (selectedEntrypoint.value == "" && !isWholeProgramTarget(compileTarget)) {
         diagnosticsText.value = "Please select the entry point name";
@@ -584,7 +582,6 @@ async function loadFromURL(inputURL: string) {
         const data = await resp.text();
         diagnosticsText.value = '';
         codeEditor.value?.setEditorValue(data);
-        updateEntryPointOptions();
         compileOrRun();
     } catch (err: any) {
         diagnosticsText.value = `Failed to load shader from URL:\n${inputURL}\nError: ${err.message}`;
@@ -639,8 +636,7 @@ function restoreFromURL(): boolean {
                         fileTabs.value.forEach(tab => {
                             editorRefs[tab.name]?.setEditorValue(tab.content);
                         });
-                        updateEntryPointOptions();
-                        compileOrRun();
+                    compileOrRun();
                     });
                     return;
                 }
@@ -659,7 +655,6 @@ function restoreFromURL(): boolean {
                 tab0.content = decompressed;
                 editorRefs[tab0.name]?.setEditorValue(decompressed);
             }
-            updateEntryPointOptions();
             compileOrRun();
         });
         gotCodeFromUrl = true;
@@ -671,7 +666,7 @@ function restoreFromURL(): boolean {
 async function runIfFullyInitialized() {
     // Wait until the first editor tab is available
     const firstTabName = fileTabs.value[0]?.name;
-    if (compiler && slangd && pageLoaded && editorRefs[firstTabName]) {
+    if (compiler && slangd && pageLoaded) {
         (await import("./language-server")).initLanguageServer();
 
         initialized.value = true;
@@ -686,7 +681,10 @@ async function runIfFullyInitialized() {
         if (!gotCodeFromUrl) {
             const firstContent = editorRefs[firstTabName].getValue();
             if (firstContent == "") {
-                loadDemo(defaultShaderURL);
+                // only load default demo if the user hasn't already picked one
+                if (selectedDemo.value === "") {
+                    loadDemo(defaultShaderURL);
+                }
             } else {
                 compileOrRun();
             }
@@ -876,7 +874,6 @@ function logError(message: string) {
                         class="codingSpace"
                         :ref="el => editorRefs[tab.name] = el"
                         :modelUri="tab.uri"
-                        @vue:mounted="runIfFullyInitialized"
                         @change="(val) => { tab.content = val; if (tab.name === 'user') contentSource = 'user-code'; }"
                     />
                 </Tab>
