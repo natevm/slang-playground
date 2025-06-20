@@ -134,6 +134,31 @@ watch(diagnosticsText, (newText, _) => {
         tabContainer.value?.setActiveTab("diagnostics")
     }
 })
+
+const originalConsole = {
+    log: console.log.bind(console),
+    info: console.info.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+    debug: console.debug.bind(console)
+}
+function appendDiagnostic(level: string, ...messages: any[]) {
+    diagnosticsText.value += `[${level}] ${messages.map(m => typeof m === 'string' ? m : (m?.toString() ?? String(m))).join(' ')}\n`
+}
+console.log = (...args: any[]) => { originalConsole.log(...args); appendDiagnostic('Log', ...args) }
+console.info = (...args: any[]) => { originalConsole.info(...args); appendDiagnostic('Info', ...args) }
+console.warn = (...args: any[]) => { originalConsole.warn(...args); appendDiagnostic('Warn', ...args) }
+console.error = (...args: any[]) => { originalConsole.error(...args); appendDiagnostic('Error', ...args) }
+console.debug = (...args: any[]) => { originalConsole.debug(...args); appendDiagnostic('Debug', ...args) }
+window.addEventListener('error', (event) => {
+    appendDiagnostic('Error', `${event.message} (${event.filename}:${event.lineno}:${event.colno})`)
+})
+window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason instanceof Error ? event.reason.message : String(event.reason)
+    const stack = event.reason && event.reason.stack ? `\n${event.reason.stack}` : ''
+    appendDiagnostic('Error', `Unhandled Promise Rejection: ${reason}${stack}`)
+})
+
 const device = ref<GPUDevice | null>(null);
 
 const currentDisplayMode = ref<ShaderType>("imageMain");
