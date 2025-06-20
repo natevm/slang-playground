@@ -10,6 +10,8 @@ import { compiler, checkShaderType, slangd, moduleLoadingMessage } from './try-s
 import { computed, defineAsyncComponent, onBeforeMount, onMounted, ref, reactive, nextTick, useTemplateRef, watch, type Ref } from 'vue'
 import { isWholeProgramTarget, type Bindings, type ReflectionJSON, type RunnableShaderType, type ShaderType } from './compiler'
 import { demoList } from './demo-list'
+// Special dropdown entry for importing a custom .slang URL
+const IMPORT_URL_DEMO = '__import_url__'
 import { compressToBase64URL, decompressFromBase64URL, getResourceCommandsFromAttributes, getUniformSize, getUniformControllers, isWebGPUSupported, parseCallCommands, type CallCommand, type HashedStringData, type ResourceCommand, type UniformController, isControllerRendered } from './util'
 import { userCodeURI } from './language-server'
 import type { ThreadGroupSize } from './slang-wasm'
@@ -100,8 +102,10 @@ const targetLanguageMap: { [target in typeof compileTargets[number]]: string } =
 
 const codeGenArea = useTemplateRef("codeGenArea");
 
-const tabContainer = useTemplateRef("tabContainer");
-const editorTabContainer = useTemplateRef("editorTabContainer");
+// Refs to our editing tabs container, exposing setActiveTab()
+const tabContainer = useTemplateRef<{ setActiveTab(name: string): void }>("tabContainer");
+// Editor tab container exposes both the active tab and a method to switch it
+const editorTabContainer = useTemplateRef<{ setActiveTab(name: string): void; activeTab: string }>("editorTabContainer");
 
 const shareButton = useTemplateRef("shareButton");
 const tooltip = useTemplateRef("tooltip");
@@ -202,6 +206,35 @@ async function importIntoNewTab() {
   await nextTick()
   editorTabContainer.value!.setActiveTab(newName)
   editorRefs[newName]?.setEditorValue(text)
+}
+
+/**
+ * Prompt the user for a new .slang filename and add an empty tab for it.
+ */
+async function promptNewTab() {
+  let fileName: string | null
+  while (true) {
+    fileName = window.prompt('Enter new tab name (must end in .slang):')
+    if (!fileName) return
+    if (!fileName.endsWith('.slang')) {
+      window.alert('Tab name must end with .slang')
+      continue
+    }
+    if (fileTabs.value.some(t => t.label === fileName)) {
+      window.alert(`Tab "${fileName}" already exists`)
+      continue
+    }
+    break
+  }
+  const tabLabel = fileName
+  const tabName = tabLabel.replace(/\W+/g, '_')
+  fileTabs.value.push({ name: tabName, label: tabLabel, uri: `file:///${tabLabel}`, content: '' })
+  await nextTick()
+  editorTabContainer.value?.setActiveTab(tabName)
+  editorRefs[tabName]?.setEditorValue('')
+  try {
+    compiler?.slangWasmModule.FS.writeFile(new URL(`file:///${tabLabel}`).pathname, '')
+  } catch {}
 }
 
 const pageLoaded = ref(false);
@@ -313,29 +346,32 @@ async function onShare() {
     }
 }
 
-function loadDemo(selectedDemoURL: string) {
-    if (selectedDemoURL != "") {
-        contentSource.value = 'demo';
-        // Is `selectedDemoURL` a relative path?
-        let finalURL;
-        if (!selectedDemoURL.startsWith("http")) {
-            // If so, append the current origin to it.
-            // Combine the url to point to demos/${selectedDemoURL}.
-            finalURL = new URL("demos/" + selectedDemoURL, window.location.href);
+/**
+ * Load a built-in demo or import from URL.
+ */
+async function loadDemo(selectedDemoURL: string) {
+    if (selectedDemoURL === IMPORT_URL_DEMO) {
+        const url = window.prompt('Enter URL to import (.slang file)')
+        if (!url) {
+            selectedDemo.value = ''
+            return
         }
-        else {
-            finalURL = new URL(selectedDemoURL);
-        }
-        // Retrieve text from selectedDemoURL.
-        fetch(finalURL)
-            .then((response) => response.text())
-        .then(async (data) => {
-                codeEditor.value?.setEditorValue(data);
-                // // Work around first-switch highlighting glitch: reapply 'slang' mode on the user tab
-                // const userTab = fileTabs.value[0];
-                // editorRefs[userTab.name]?.setLanguage('slang');
-                compileOrRun();
-            });
+        contentSource.value = 'url'
+        fileURL.value = url
+        const fn = url.split('/').pop() || 'user.slang'
+        fileTabs.value = [{ name: fn.replace(/\W+/g,'_'), label: fn, uri: `file:///${fn}`, content: '' }]
+        await nextTick()
+        await loadFromURL(url)
+        selectedDemo.value = ''
+    } else if (selectedDemoURL) {
+        contentSource.value = 'demo'
+        const finalURL = selectedDemoURL.startsWith('http')
+            ? new URL(selectedDemoURL)
+            : new URL('demos/' + selectedDemoURL, window.location.href)
+        const response = await fetch(finalURL)
+        const data = await response.text()
+        codeEditor.value?.setEditorValue(data)
+        compileOrRun()
     }
 }
 
@@ -577,9 +613,7 @@ function compileShader(userSource: string, entryPoint: string, compileTarget: ty
 async function loadFromURL(inputURL: string) {
   try {
     const finalURL = new URL(normalizeGitHubUrl(inputURL), window.location.href);
-        const resp = await fetch(finalURL);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
-        const data = await resp.text();
+    const data = await fetchTextFromUrl(finalURL);
         diagnosticsText.value = '';
         codeEditor.value?.setEditorValue(data);
         compileOrRun();
@@ -748,6 +782,7 @@ function logError(message: string) {
                         <select class="dropdown-select" id="demo-select" name="demo" aria-label="Load Demo"
                             v-model="selectedDemo" @change="loadDemo(selectedDemo)">
                             <option value="" disabled selected>Load Demo</option>
+                            <option :value="IMPORT_URL_DEMO" key="import-url">Import from URL</option>
                             <option v-for="demo in demoList" :value="demo.url" :key="demo.url"
                                 :disabled="demo.url == ''">{{ demo.name }}
                             </option>
@@ -800,17 +835,6 @@ function logError(message: string) {
                     </button>
                 </div>
 
-                <!-- Import buttons: into current tab / new tab -->
-                <div class="navbar-standalone-button-item">
-                    <button class="svg-btn" title="Import into current tab" @click="importIntoCurrentTab">
-                        Import Here
-                    </button>
-                </div>
-                <div class="navbar-standalone-button-item">
-                    <button class="svg-btn" title="Import into new tab" @click="importIntoNewTab">
-                        Import New
-                    </button>
-                </div>
 
                 <!-- Help button section -->
                 <div class="navbar-standalone-button-item">
@@ -868,7 +892,7 @@ function logError(message: string) {
             </TabContainer>
         </Teleport>
         <Teleport v-if="pageLoaded" defer :to="isSmallScreen ? '#small-screen-editor' : '#big-screen-editor'">
-            <TabContainer ref="editorTabContainer">
+        <TabContainer ref="editorTabContainer" @add-tab="promptNewTab">
                 <Tab v-for="tab in fileTabs" :name="tab.name" :label="tab.label" :key="tab.name">
                     <MonacoEditor
                         class="codingSpace"
