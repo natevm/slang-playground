@@ -416,7 +416,7 @@ async function compileOrRun() {
     const shaderType = checkShaderType(userSource);
 
     if (shaderType == null) {
-        onCompile();
+        await onCompile();
     }
     else {
         if (device.value == null) {
@@ -521,7 +521,7 @@ async function tryRun() {
     }
 
     const entryPointName = shaderType;
-    const ret = compileShader(userSource, entryPointName, "WGSL");
+    const ret = await compileShader(userSource, entryPointName, "WGSL");
 
     if (!ret.succ) {
         toggleDisplayMode(null);
@@ -581,9 +581,8 @@ async function onCompile() {
         await compiler.initSpirvTools();
 
     // compile the compute shader code from input text area
-    // Module-from-url directive is handled natively by Slang; compile directly
     const userSource = codeEditor.value!.getValue();
-    compileShader(userSource, selectedEntrypoint.value, compileTarget);
+    await compileShader(userSource, selectedEntrypoint.value, compileTarget);
 
     if (compiler.diagnosticsMsg.length > 0) {
         diagnosticsText.value = compiler.diagnosticsMsg;
@@ -608,7 +607,9 @@ export type MaybeShader = Shader | {
     succ: false
 };
 
-function compileShader(userSource: string, entryPoint: string, compileTarget: typeof compileTargets[number]): MaybeShader {
+async function compileShader(userSource: string, entryPoint: string, compileTarget: typeof compileTargets[number]): Promise<MaybeShader> {
+    // fetch and register modules referenced by playground::URL directives
+    await runURLImports(userSource);
     if (compiler == null) throw new Error("No compiler available");
     const compiledResult = compiler.compile(userSource, entryPoint, compileTarget, device.value == null);
     diagnosticsText.value = compiler.diagnosticsMsg;
@@ -725,6 +726,7 @@ function restoreFromURL(): boolean {
 async function runIfFullyInitialized() {
     // Wait until the first editor tab is available
     const firstTabName = fileTabs.value[0]?.name;
+    await nextTick();
     if (compiler && slangd && pageLoaded) {
         (await import("./language-server")).initLanguageServer();
 
@@ -738,8 +740,8 @@ async function runIfFullyInitialized() {
             } catch {}
         });
         if (!gotCodeFromUrl) {
-            const firstContent = editorRefs[firstTabName].getValue();
-            if (firstContent == "") {
+            const firstContent = editorRefs[firstTabName]?.getValue() ?? fileTabs.value[0].content ?? '';
+            if (firstContent === "") {
                 // only load default demo if the user hasn't already picked one
                 if (selectedDemo.value === "") {
                     loadDemo(defaultShaderURL);
