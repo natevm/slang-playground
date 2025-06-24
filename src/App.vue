@@ -461,11 +461,13 @@ const fetchedURLModules = new Set<string>();
 async function runURLImports(sourceText: string): Promise<string> {
     const urlImportRe = /\[playground::URL\(\s*"([^"]+)"\s*\)\]\s*void\s+([A-Za-z_]\w*)\s*\(\s*\)\s*;/g;
     let m: RegExpExecArray | null;
+    let importedAny = false;
     while ((m = urlImportRe.exec(sourceText)) !== null) {
         const [, urlStr, modName] = m;
         const finalURL = new URL(normalizeGitHubUrl(urlStr), window.location.href);
         const key = finalURL.toString();
         if (!fetchedURLModules.has(key)) {
+            importedAny = true;
             fetchedURLModules.add(key);
             let modText: string;
             try {
@@ -499,6 +501,10 @@ async function runURLImports(sourceText: string): Promise<string> {
         }
     }
     console.log("Done loading!");
+    if (importedAny) {
+        const cur = codeEditor.value!.getValue();
+        codeEditor.value!.setEditorValue(cur);
+    }
     return sourceText;
 }
 
