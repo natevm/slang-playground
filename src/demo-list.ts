@@ -1,5 +1,6 @@
 export let demoList = [
   { name: "Simple Print", url: "simple-print.slang" },
+  { name: "Binary Print Demo", url: "binary-print.slang" },
   { name: "Simple Image", url: "simple-image.slang" },
   { name: "Image From URL", url: "image-from-url.slang" },
   { name: "Multi-kernel Demo", url: "multiple-kernels.slang" },

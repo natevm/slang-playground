@@ -390,7 +390,13 @@ export class SlangCompiler {
 
                 return { storageTexture: { access, format } };
             } else if (parameterReflection.type.baseShape == "structuredBuffer") {
-                return { buffer: { type: 'storage' } };
+                // Map Slang structuredBuffer access to WebGPU storage buffer types
+                const access = parameterReflection.type.access;
+                // readWrite => read-write storage; otherwise assume read-only storage
+                const bufType: GPUBufferBindingType = access === 'readWrite'
+                    ? 'storage'
+                    : 'read-only-storage';
+                return { buffer: { type: bufType } };
             } else {
                 let _: never = parameterReflection.type;
                 console.error(`Could not generate binding for ${name}`)

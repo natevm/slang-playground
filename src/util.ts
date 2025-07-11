@@ -240,6 +240,10 @@ export type ParsedCommand = {
     "url": string,
     "format": GPUTextureFormat,
 } | {
+    "type": "DATA",
+    "url": string,
+    "elementSize": number,
+} | {
     "type": "SLIDER",
     "default": number,
     "min": number,
@@ -363,6 +367,17 @@ export function getResourceCommandsFromAttributes(reflection: ReflectionJSON): R
                     type: playground_attribute_name,
                     url: attribute.arguments[0] as string,
                     format,
+                };
+            } else if (playground_attribute_name == "DATA") {
+                if (parameter.type.kind != "resource" || parameter.type.baseShape != "structuredBuffer") {
+                    throw new Error(`${playground_attribute_name} attribute cannot be applied to ${parameter.name}, it only supports structured buffers`);
+                }
+                // Size in bytes of each element within the buffer (e.g., sizeof(T)).
+                const elementSize = getSize(parameter.type.resultType);
+                command = {
+                    type: playground_attribute_name,
+                    url: attribute.arguments[0] as string,
+                    elementSize,
                 };
             } else if (playground_attribute_name == "TIME") {
                 if (parameter.type.kind != "scalar" || !parameter.type.scalarType.startsWith("float") || parameter.binding.kind != "uniform") {

@@ -274,8 +274,16 @@ function handleResize() {
     passThroughPipeline.inputTexture = (allocatedResources.get("outputTexture") as GPUTexture);
     passThroughPipeline.createBindGroup();
 
-    for (const pipeline of computePipelines)
-        pipeline.createBindGroup(allocatedResources);
+    for (const pipeline of computePipelines) {
+        try {
+            pipeline.createBindGroup(allocatedResources);
+        } catch (err: any) {
+            // Ignore missing resource bind-group errors during resize
+            if (!(err instanceof Error && err.message.startsWith("Cannot create bind-group"))) {
+                throw err;
+            }
+        }
+    }
 }
 
 // We use the timer in the resize handler debounce the resize event, otherwise we could end of rendering
@@ -706,6 +714,35 @@ async function processResourceCommands(resourceBindings: Bindings, resourceComma
             catch (error) {
                 throw new Error(`Failed to create texture from image: ${error}`);
             }
+        } else if (parsedCommand.type === "DATA") {
+            // Load binary data from URL and upload to structured buffer.
+            const bindingInfo = resourceBindings.get(resourceName);
+            if (!bindingInfo) {
+                throw new Error(`Resource ${resourceName} is not defined in the bindings.`);
+            }
+            if (!bindingInfo.buffer) {
+                throw new Error(`Resource ${resourceName} is not defined as a buffer.`);
+            }
+            let dataBuffer: ArrayBuffer;
+            try {
+                const response = await fetch(parsedCommand.url);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch binary data from URL: ${parsedCommand.url}`);
+                }
+                dataBuffer = await response.arrayBuffer();
+            } catch (error) {
+                throw new Error(`Failed to load binary data from URL: ${parsedCommand.url}`);
+            }
+            if (dataBuffer.byteLength % parsedCommand.elementSize !== 0) {
+                console.warn(`Data length ${dataBuffer.byteLength} is not a multiple of element size ${parsedCommand.elementSize}`);
+            }
+            const buffer = device.createBuffer({
+                size: dataBuffer.byteLength,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            });
+            safeSet(allocatedResources, resourceName, buffer);
+            device.queue.writeBuffer(buffer, 0, new Uint8Array(dataBuffer));
+            await device.queue.onSubmittedWorkDone();
         } else if (parsedCommand.type === "RAND") {
             const elementSize = 4; // RAND is only valid for floats
             const bindingInfo = resourceBindings.get(resourceName);
@@ -888,8 +925,19 @@ function onRun(runCompiledCode: CompiledPlayground) {
             for (const callCommand of compiledCode.callCommands) {
                 const entryPoint = callCommand.fnName;
                 const pipeline = new ComputePipeline(device);
-                // create a pipeline resource 'signature' based on the bindings found in the program.
-                pipeline.createPipelineLayout(compiledCode.shader.layout);
+                // derive the bind-group layout only for the resources this entry-point needs
+                const needed = new Set<string>([
+                    ...compiledCode.resourceCommands.map(rc => rc.resourceName),
+                    'g_printedBuffer',
+                ]);
+                if (compiledCode.shader.layout.has('uniformInput')) {
+                    needed.add('uniformInput');
+                }
+                const subset = new Map<string, GPUBindGroupLayoutEntry>();
+                for (const [name, binding] of compiledCode.shader.layout) {
+                    if (needed.has(name)) subset.set(name, binding);
+                }
+                pipeline.createPipelineLayout(subset);
                 pipeline.createPipeline(module, entryPoint);
                 pipeline.setThreadGroupSize(compiledCode.shader.threadGroupSizes[entryPoint]);
                 computePipelines.push(pipeline);

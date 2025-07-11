@@ -60,6 +60,8 @@ defineExpose({
         Initialize a sampler state with linear filtering and repeat address mode for sampling textures.
         <h4 class="doc-header"><code>[playground::URL("https://example.com/image.png")]</code></h4>
         Initialize a texture with image from URL.
+        <h4 class="doc-header"><code>[playground::DATA("url/to/data.bin")]</code></h4>
+        Initialize a StructuredBuffer with binary data from the given URL.
         <h4 class="doc-header"><code>[playground::RAND(1000)]</code></h4>
         Initialize a <code>float</code> buffer with uniform random floats between 0 and 1.
         <h4 class="doc-header"><code>[playground::TIME]</code></h4>

@@ -111,6 +111,13 @@ public struct playground_URLAttribute
     string url;
 };
 
+// Load raw binary data from URL into a structured buffer.
+[__AttributeUsage(_AttributeTargets.Var)]
+public struct playground_DATAAttribute
+{
+    string url;
+};
+
 // Bind a sampler with reasonable defaults for texture sampling.
 [__AttributeUsage(_AttributeTargets.Var)]
 public struct playground_SAMPLERAttribute
